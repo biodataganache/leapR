@@ -2,7 +2,11 @@
 title: "leapr_enrichment_trelliscope"
 author: "Iobani Godinez"
 date: "Dec 9, 2020"
-output: html_document
+output: 
+  html_document:
+    code_folding: hide
+    lib_dir: trelli
+
 ---
 
 
@@ -14,6 +18,8 @@ library(tidyr)
 library(reshape2)
 library(plotly)
 library(leapr)
+library(stringr)
+
 ```
 
 
@@ -40,10 +46,12 @@ protdata.enrichment.svl = leapR(geneset=ncipid,
 ```
 
 ```{r helper, include=F, results=F, warning=F}
-#helper function takes in enrichment results and expands the "gene" column into multiple rows since each pathway contains a list of genes and not a single gene
+#helper function takes in enrichment results and expands the "gene" column into multiple rows since each pathway contains a list of genes and not a single gene.
 
-helper_function = function(enrichment_df){
-  
+helper_function = function(enrichment_df, protdata){
+protdata = cbind(rownames(protdata), protdata)
+colnames(protdata)[1] = "gene"
+    
 enrichment_df = cbind(rownames(enrichment_df), enrichment_df)
 colnames(enrichment_df)[1] = "pathway"
 
@@ -51,19 +59,23 @@ empty_gene = which(enrichment_df$ingroupnames == "")
 enrichment_df = enrichment_df[-empty_gene,]
   
   tessa = mapply(function(path, gene){
-  gene = unlist(strsplit(gene, ","))
-  path = as.character(path)
-    if(length(gene) > 1){
+                                      gene = unlist(strsplit(gene, ","))
+                                      gene = str_replace_all(gene, fixed(" "), "")
+  
+                                      path = as.character(path)
+                                      path = str_replace_all(path, fixed(" "), "")
+  
+                                      if(length(gene) > 1){
+                                                           col1 = rep(path, length(gene))
+                                                           result = cbind(col1, gene)
+                                                           }else{
+                                                                 result = cbind(path, gene)
+                                                                }
 
-    col1 = rep(path, length(gene))
+                                      return(result)
+                                      
+                                      }, enrichment_df$pathway, enrichment_df$ingroupnames)
 
-    result = cbind(col1, gene)
-  }else{
-    result = cbind(path, gene)
-  }
-
-  return(result)
-}, enrichment_df$pathway, enrichment_df$ingroupnames)
 
 tessa = do.call(rbind, tessa)
 tessa = as.data.frame(tessa)
@@ -71,27 +83,49 @@ colnames(tessa)[1] = "pathway"
 
 enrichment_df = enrichment_df[,-which(colnames(enrichment_df) == "ingroupnames")]
 
-new_data = merge(enrichment_df, tessa, by= "pathway")
+new_enrichment_df = merge(enrichment_df, tessa, by= "pathway")
 
-return(new_data)
+final_data = merge(new_enrichment_df, protdata, by = "gene", all.x = T)
+
+return(final_data)
   
 }
 
-new_data = helper_function(protdata.enrichment.svl)
+new_data = helper_function(protdata.enrichment.svl, protdata)
 
 ```
 
-```{r myfunction, include=F, results=F, warning=F}
+```{r plot_helper, include=F, results=F, warning=F}
+library(magrittr)
+#here we create another helper function but to plot the data within the "make_trell" function 
+plot_helper = function(single_df){
+  #since we used "helper_function" to organize the data we need to extract the columns with abundance values to form a heatmap plot
+  single_subset = single_df[ , c(1, 13:186)]
+  
+  #rownames(single_subset) = single_df$gene
+  single_subset = single_subset %>% data.frame %>% set_rownames(.$gene) %>% select(-gene)
+  
+  single_subset = as.matrix(single_subset)
+  
+   result = plot_ly(x = colnames(single_subset), y = rownames(single_subset), z = single_subset, zmin = round(min(single_subset, na.rm = T)), zmax = round(max(single_subset, na.rm = T)/4), type = "heatmap", colorscale = "YlOrRd") %>% layout(yaxis = list(showticklabels = F, title = "abundance"), xaxis = list(title = "sample name", showticklabels = T))
+  
+  return(result)
+  
+}
 
-#here we work on a function to take in the enrichment results dataframe and return a trelliscope display where each panel is a pathway that displays enrichment statistics
+```
 
-make_trell = function(enrichment_df){
+```{r trelliscope, include = T, results= T, warning = F}
+
+#here we work on a function to take in the enrichment results dataframe (new_data from the above chunk) and return a trelliscope display where each panel is a pathway that displays enrichment statistics
+
+make_trell = function(new_data){
   
   #replace na and nan values with zeros
- # enrichment_df[is.na(enrichment_df)] = 0
+   new_data[is.na(new_data)] = 0
   
   #we need to subset data for each pathway
-   tess2 = enrichment_df %>%
+   tess2 = new_data %>%
    group_by(pathway) %>%
    nest() %>%
    ungroup() %>%
@@ -102,19 +136,19 @@ make_trell = function(enrichment_df){
                                           
                                            )
                         ),
-         panel = map_plot(data, ~qplot(.$ingroup_n[1], geom="histogram")
+                          panel = map_plot(data, ~plot_helper(.)
                           )
          )
    
-final2 = trelliscope(tess2, name = "first trelliscopejs", self_contained = T)
+final2 = trelliscope(tess2, name = "first trelliscopejs", self_contained = T, path = "trelli")
 return(final2)
    
   
 }
 
 
-#make_trell(new_data)
-
+display = make_trell(new_data)
+display
 ```
 
 
